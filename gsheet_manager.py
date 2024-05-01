@@ -7,7 +7,7 @@ import numpy as np
 from datetime import date
 import re
 
-class gspreadsheet_manager:
+class GspreadManager:
     def __init__(self, gsheet=None):
         self.json_file_path = None
         self.spreadsheet_url = None
@@ -15,34 +15,80 @@ class gspreadsheet_manager:
         self.doc = None
         self.worksheets = {}
         self.sheets_count = 0
+        self.worksheet_names = []
     def set_json_path_and_url(self, json_file_path, gsheet_url):
         self.json_file_path = json_file_path
         self.spreadsheet_url = gsheet_url
-    def open_spreadsheet(self):
+    def open_spreadfile(self):
         if (not self.json_file_path) or (not self.spreadsheet_url):
             return False
         try:
             self.gc = gspread.service_account(self.json_file_path)
             self.doc = self.gc.open_by_url(self.spreadsheet_url)
-            return self.doc
+            self.worksheet_names = [worksheet.title for worksheet in self.doc.worksheets()]
+            for wn in self.worksheet_names:
+                self.worksheets[wn] = self.doc.worksheet(wn)
+                self.sheets_count += 1
         except Exception as e:
             print(f"Error occured opening sheet. {self.json_file_path} and {self.spreadsheet_url}")
             print(e)
             return False
+        return self.doc
     def open_worksheet(self, sheet_name):
         self.worksheets[sheet_name] = self.doc.worksheet(sheet_name)
         self.sheets_count += 1
+        if sheet_name not in self.worksheet_names:
+            self.worksheet_names.append(sheet_name)
         return self.worksheets[sheet_name]
-    def update(self, which, where=None, what=None):
+    def fetch_all_as_df(self, **kwargs):
+        dfs = {}
+        for wn in self.worksheet_names:
+            dfs[wn] = self.fetch_as_df(wn, **kwargs)
+        return dfs
+    def fetch_as_df(self, which, **kwargs):
+        try:
+            worksheet = self.doc.worksheet(which)
+        except Exception as e:
+            print(e)
+            return None
+        values = worksheet.get_all_values()
+        if kwargs.get('NoHeader'):
+            df = pd.DataFrame(values)
+        else:
+            df = pd.DataFrame(values[1:], columns=values[0])
+        return df
+    def update(self, which, where=None, what=None, **kwargs):
+        """
+        which 시트의 where range를 waht 밸류로 업데이트
+        where가 없다면 시트 전체를 업데이트
+        :param which:
+        :param where:
+        :param what:
+        :return:
+        """
+        if not (which in self.worksheets.keys()):
+            try:
+                self.open_worksheet(which)
+            except:
+                self.doc.add_worksheet(title=which, rows=100, cols=20)
+                self.open_worksheet(which)
+                print(f"sheet name, {which} has made.")
         if which in self.worksheets.keys():
-            if not where:
+            if where:
                 self.worksheets[which].update(where, self.data_preprocessing(what))
                 return True
             else:
-                self.worksheets[which].update(self.data_preprocessing(what))
+                if isinstance(what, pd.DataFrame):
+                    if kwargs.get('NoHeader'):
+                        self.worksheets[which].update(what.values.tolist())
+                    else:
+                        self.worksheets[which].update([what.columns.values.tolist()]+what.values.tolist())
+                else:
+                    # self.worksheets[which].update(self.data_preprocessing(what))
+                    self.worksheets[which].update(what)
                 return True
         else:
-            print(f"No such sheet:{which}")
+            print(f"No such sheet:{which} and fail to make it")
             return False
     def update_sheet_with_df(self, which, what):
         return self.update(which, where=None, what=what)
